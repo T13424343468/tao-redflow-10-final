@@ -1,0 +1,56 @@
+name: render-and-check
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '1-59/5 * * * *'  # 每 5 分钟错峰自续跑（2026-11-13 迁移版：班次由 Actions 推进，不再依赖沙箱）
+concurrency:
+  group: render-loop
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 60
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 安装依赖
+        run: pip install pillow
+      - name: 同步远端班次
+        run: git pull --rebase origin main || true
+      - name: 云端渲染全部视角
+        run: python proxy_render.py
+      - name: 断言产物齐全
+        run: |
+          for f in proxy_view_wide proxy_view_close proxy_view_prc proxy_view_strait proxy_view_helo proxy_view_anchorage; do
+            [ -s "$f.png" ] || { echo "MISSING/EMPTY: $f.png"; exit 1; }
+          done
+          ls -la proxy_view_*.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: render-output
+          path: proxy_view_*.png
+          retention-days: 7
+      - name: 班次回写（自续跑）
+        run: |
+          git config user.name "T13424343468"
+          git config user.email "13424343468@163.com"
+          if [ -f ITER.md ] && grep -q '^round:' ITER.md; then
+            R=$(( $(sed -n 's/^round: \([0-9]*\).*/\1/p' ITER.md) + 1 ))
+          else
+            R=$(git log --format=%s -60 | grep -oE '(loop round|第)[0-9]+' | grep -oE '[0-9]+' | head -1)
+            R=${R:-0}; R=$((R+1))
+            printf 'round: %s\n' "$R" > ITER.md
+          fi
+          sed -i "s/^round: .*/round: $R/" ITER.md
+          git add ITER.md
+          git commit -m "loop round $R (actions schedule) [skip ci]" || { echo "no commit"; exit 0; }
+          git pull --rebase origin main || true
+          git push
