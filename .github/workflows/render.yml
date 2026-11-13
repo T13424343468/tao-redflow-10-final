@@ -10,6 +10,7 @@ concurrency:
   cancel-in-progress: false
 permissions:
   contents: write
+  actions: write
 jobs:
   render:
     runs-on: ubuntu-latest
@@ -54,3 +55,10 @@ jobs:
           git commit -m "loop round $R (actions schedule) [skip ci]" || { echo "no commit"; exit 0; }
           git pull --rebase origin main || true
           git push
+      - name: 自续跑链（触发下一轮）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sleep 45
+          gh api -X POST repos/${GITHUB_REPOSITORY}/actions/workflows/render.yml/dispatches -f ref=main
+          echo "chain: next round dispatched"
